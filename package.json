@@ -1,0 +1,11 @@
+{
+  "name": "commut-bus-checker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node tests/core.test.js && node tests/browser.test.js",
+    "test:core": "node tests/core.test.js",
+    "test:browser": "node tests/browser.test.js"
+  },
+  "devDependencies": { "puppeteer-core": "^24.0.0" }
+}

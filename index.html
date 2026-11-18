@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Commut Bus Fare Checker</title>
+<style>
+:root{--ink:#14213d;--muted:#5b6475;--line:#dfe3ea;--brand:#0b6e4f;--brand2:#e9f5f0;--warn:#fff6e0;--bad:#fdecec;--badink:#a02020;--bg:#f5f7fa}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45}
+header{background:var(--brand);color:#fff;padding:18px 16px}
+header h1{margin:0;font-size:20px}
+header p{margin:4px 0 0;font-size:14px;opacity:.9}
+main{max-width:760px;margin:0 auto;padding:14px}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+.card h2{margin:0 0 10px;font-size:16px}
+.card h3{margin:14px 0 4px;font-size:15px}
+label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+input[type=text],input[type=number]{width:100%;padding:11px;border:1px solid var(--line);border-radius:8px;font-size:16px;background:#fff;color:var(--ink)}
+.field{position:relative}
+.sugg{position:absolute;left:0;right:0;top:100%;z-index:20;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.12);max-height:240px;overflow:auto;display:none}
+.sugg div{padding:10px;font-size:14px;border-bottom:1px solid var(--line);cursor:pointer}
+.sugg div:last-child{border-bottom:0}
+.sugg div:hover{background:var(--brand2)}
+.sugg .none{color:var(--muted);cursor:default}
+.picked{font-size:13px;color:var(--brand);margin-top:4px;word-break:break-word}
+.row{display:flex;gap:8px;align-items:flex-end}
+.row .field{flex:1}
+button{font:inherit;border:0;border-radius:8px;padding:11px 14px;cursor:pointer}
+.ghost{background:var(--brand2);color:var(--brand);font-weight:600}
+.rm{background:var(--bad);color:var(--badink)}
+.seg{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}
+.seg button{background:#eef0f4;color:var(--ink);flex:1;min-width:140px}
+.seg button.on{background:var(--brand);color:#fff;font-weight:600}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:480px){.grid{grid-template-columns:1fr}}
+.res{border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:10px}
+.big{font-size:26px;font-weight:700;color:var(--brand)}
+.tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{width:100%;border-collapse:collapse;font-size:14px;margin-top:6px}
+th{font-size:12px;color:var(--muted);font-weight:600;text-align:right;padding:5px 6px;border-bottom:2px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+td{padding:6px;border-bottom:1px solid var(--line);text-align:right}
+.tw td{white-space:nowrap}
+td:last-child{padding-left:12px}
+tr.tot td{font-weight:700}
+.neg{color:var(--badink)}
+.pos{color:var(--brand)}
+.msg{background:var(--warn);border:1px solid #f0dca0;border-radius:8px;padding:10px;font-size:14px;margin-top:10px}
+.msg.hide{display:none}
+.ok{background:var(--brand2);border:1px solid #bfe0d2;border-radius:8px;padding:10px;font-size:14px;margin-top:8px}
+.no{background:var(--bad);border:1px solid #f0b8b8;border-radius:8px;padding:10px;font-size:14px;margin-top:8px}
+.note{font-size:13px;color:var(--muted)}
+.note li{margin-bottom:4px}
+.banner{background:var(--warn);border:1px solid #f0dca0;border-radius:8px;padding:10px;font-size:13px;margin-bottom:14px}
+.sub{border-top:1px dashed var(--line);margin-top:8px;padding-top:6px;display:none}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>Commut Bus Fare Checker</h1>
+  <p>Return trips from the event to drop-off hubs. One fare per seat. No service, checkout or driver fee.</p>
+</header>
+<main>
+  <div class="banner" id="banner">Implements Rume's pricing policy as drafted. Provisional distances must be verified. Internal Commut tool.</div>
+
+  <div class="seg" id="tabs">
+    <button data-tab="long" class="on">1. Long distance (per km)</button>
+    <button data-tab="short">2. Short distance (supplier cost)</button>
+    <button data-tab="shuttle">3. Multiple shuttle trips</button>
+    <button data-tab="depart">4. Departure check</button>
+  </div>
+
+  <!-- MODE 1 -->
+  <section id="tab-long">
+    <div class="card">
+      <h2>Long distance: the inputs</h2>
+      <div class="grid">
+        <div><label for="l-hire">Bus hire (₦)</label><input type="number" id="l-hire" value="290000" min="0" step="any" inputmode="decimal"></div>
+        <div><label for="l-cap">Seats sold (capacity)</label><input type="number" id="l-cap" value="14" min="1" step="1" inputmode="numeric"></div>
+        <div><label for="l-margin">Target margin (%)</label><input type="number" id="l-margin" value="10" min="0" max="99" step="any" inputmode="decimal"></div>
+      </div>
+      <h3>Drop-off corridors</h3>
+      <p class="note" style="margin:0 0 4px">Type the km yourself, or use "Find km by road" to fetch a driving distance. Typed km always works. The shortest corridor sets the rate.</p>
+      <div id="l-rows"></div>
+      <button class="ghost" id="l-add" style="margin-top:10px">+ Add a corridor</button>
+      <div class="sub" id="l-venuebox" style="display:block">
+        <label for="l-venue">Event venue (only needed for "Find km by road")</label>
+        <div class="field"><input type="text" id="l-venue" placeholder="e.g. Shiro Lagos" autocomplete="off"><div class="sugg" id="l-venue-sugg"></div></div>
+        <div class="picked" id="l-venue-picked"></div>
+      </div>
+      <div class="msg hide" id="l-msg"></div>
+    </div>
+    <div id="l-out"></div>
+  </section>
+
+  <!-- MODE 2 -->
+  <section id="tab-short" class="hidden">
+    <div class="card">
+      <h2>Short distance: the inputs</h2>
+      <div class="grid">
+        <div><label for="s-quote">Supplier quote (₦)</label><input type="number" id="s-quote" value="120000" min="0" step="any" inputmode="decimal"></div>
+        <div><label for="s-pax">Expected paid passengers</label><input type="number" id="s-pax" value="13" min="1" step="1" inputmode="numeric"></div>
+        <div><label for="s-margin">Target margin (%)</label><input type="number" id="s-margin" value="10" min="0" max="99" step="any" inputmode="decimal"></div>
+      </div>
+      <div class="msg hide" id="s-msg"></div>
+    </div>
+    <div id="s-out"></div>
+  </section>
+
+  <!-- MODE 3 -->
+  <section id="tab-shuttle" class="hidden">
+    <div class="card">
+      <h2>Multiple shuttle trips: the inputs</h2>
+      <div class="grid">
+        <div><label for="m-cost">Total cost for all trips (₦)</label><input type="number" id="m-cost" value="180000" min="0" step="any" inputmode="decimal"></div>
+        <div><label for="m-trips">Number of trips</label><input type="number" id="m-trips" value="3" min="1" step="1" inputmode="numeric"></div>
+        <div><label for="m-cap">Seats per trip</label><input type="number" id="m-cap" value="14" min="1" step="1" inputmode="numeric"></div>
+        <div><label for="m-margin">Target margin (%)</label><input type="number" id="m-margin" value="10" min="0" max="99" step="any" inputmode="decimal"></div>
+      </div>
+      <div class="msg hide" id="m-msg"></div>
+    </div>
+    <div id="m-out"></div>
+  </section>
+
+  <!-- MODE 4 -->
+  <section id="tab-depart" class="hidden">
+    <div class="card">
+      <h2>Departure check: the inputs</h2>
+      <div class="grid">
+        <div><label for="d-fare">Fare per seat (₦)</label><input type="number" id="d-fare" value="10300" min="0" step="any" inputmode="decimal"></div>
+        <div><label for="d-cost">Supplier cost (₦)</label><input type="number" id="d-cost" value="120000" min="0" step="any" inputmode="decimal"></div>
+        <div><label for="d-margin">Target margin (%)</label><input type="number" id="d-margin" value="10" min="0" max="99" step="any" inputmode="decimal"></div>
+        <div><label for="d-book">Bookings so far</label><input type="number" id="d-book" value="13" min="0" step="1" inputmode="numeric"></div>
+        <div><label for="d-cap">Seats on the bus (optional)</label><input type="number" id="d-cap" value="14" min="0" step="1" inputmode="numeric"></div>
+      </div>
+      <div class="msg hide" id="d-msg"></div>
+    </div>
+    <div id="d-out"></div>
+  </section>
+
+  <div class="card note">
+    <ul style="margin:0;padding-left:18px">
+      <li>Return only, from the event venue to the drop-off hub. No service, checkout or driver fee is added.</li>
+      <li>Long distance: required revenue = bus hire ÷ (1 − margin). Rate = required revenue ÷ (seats × shortest corridor km). Fare = km × rate, rounded up to the next ₦100.</li>
+      <li>Short distance: fare = supplier quote ÷ (passengers × (1 − margin)), rounded up to the next ₦100.</li>
+      <li>Shuttle trips: fare = cost ÷ (trips × seats × (1 − margin)), shown rounded up to the next ₦100.</li>
+      <li>Departure check: break-even bookings = cost ÷ fare, rounded up. Target-margin bookings = cost ÷ (fare × (1 − margin)), rounded up.</li>
+      <li>Profit = fare × bookings − supplier cost. Margin = profit ÷ revenue.</li>
+      <li>Distance lookup uses free public map services (OpenStreetMap Nominatim, Photon and OSRM). Please use lightly and internally only. Road distances are without traffic.</li>
+    </ul>
+  </div>
+</main>
+
+<script>
+/* ===== CORE LOGIC (tested with node) ===== */
+//CORE_START
+function ceil100(x){ return Math.ceil(x / 100 - 1e-9) * 100; }
+function ceilInt(x){ return Math.ceil(x - 1e-9); }
+function floor2(x){ return Math.floor(x * 100 + 1e-9) / 100; } // rate as printed in the policy: 311.0253 -> 311.02
+function pct(x){ return Math.round(x * 10000) / 100; } // 0.1038 -> 10.38
+
+// Profit and margin for a given number of paid seats.
+function economics(fare, bookings, cost){
+  var revenue = fare * bookings;
+  var profit = revenue - cost;
+  return {bookings:bookings, revenue:revenue, profit:profit, margin: revenue > 0 ? profit / revenue : null};
+}
+
+// Mode 1: long distance per km.
+// p: {hire, capacity, margin (0-1), corridors:[{name, km}]}
+function longDistance(p){
+  var required = p.hire / (1 - p.margin);
+  var kms = p.corridors.map(function(c){return c.km;}).filter(function(k){return k > 0;});
+  if(!kms.length) return {required:required, rate:null, shortest:null, rows:[]};
+  var shortest = Math.min.apply(null, kms);
+  var rate = required / (p.capacity * shortest);
+  var rateShown = floor2(rate);
+  var rows = p.corridors.map(function(c){
+    var fare = c.km > 0 ? ceil100(c.km * rate) : null;
+    var row = {name:c.name, km:c.km, fare:fare, full:null, at:{}};
+    if(fare !== null){
+      row.full = economics(fare, p.capacity, p.hire);
+      [12,13,14].forEach(function(n){ row.at[n] = economics(fare, n, p.hire); });
+    }
+    return row;
+  });
+  return {required:required, rate:rate, rateShown:rateShown, shortest:shortest, rows:rows};
+}
+
+// Mode 2: short distance supplier cost.
+function shortFare(quote, pax, margin){
+  var exact = quote / (pax * (1 - margin));
+  return {exact:exact, fare:ceil100(exact)};
+}
+function shortTable(quotes, pax, margin){
+  return quotes.map(function(q){ var r = shortFare(q, pax, margin); return {quote:q, exact:r.exact, fare:r.fare}; });
+}
+function shortProfitTable(quote, fare){
+  return [12,13,14].map(function(n){ return economics(fare, n, quote); });
+}
+
+// Mode 3: multiple shuttle trips.
+function shuttleFare(cost, trips, capacity, margin){
+  var exact = cost / (trips * capacity * (1 - margin));
+  return {exact:exact, fare:ceil100(exact)};
+}
+
+// Mode 4: departure check (section 6).
+function departure(fare, cost, margin, bookings){
+  var breakEven = ceilInt(cost / fare);
+  var target = ceilInt(cost / (fare * (1 - margin)));
+  var e = economics(fare, bookings, cost);
+  return {
+    breakEven:breakEven, target:target, econ:e,
+    reachesBreakEven: bookings >= breakEven,
+    reachesTarget: bookings >= target
+  };
+}
+
+function naira(n, dp){
+  var d = dp === undefined ? 0 : dp;
+  var s = Math.abs(Number(n)).toLocaleString('en-NG',{minimumFractionDigits:d,maximumFractionDigits:d});
+  return (n < 0 ? '-' : '') + '\u20A6' + s;
+}
+function nominatimUrl(q){
+  return 'https://nominatim.openstreetmap.org/search?format=json&countrycodes=ng&limit=6&viewbox=2.70,6.80,4.40,6.25&q=' + encodeURIComponent(q);
+}
+function photonUrl(q){
+  return 'https://photon.komoot.io/api/?limit=6&lat=6.5244&lon=3.3792&q=' + encodeURIComponent(q);
+}
+function osrmUrl(points){
+  var s = points.map(function(c){return c.lon + ',' + c.lat;}).join(';');
+  return 'https://router.project-osrm.org/route/v1/driving/' + s + '?overview=false';
+}
+//CORE_END
+
+/* ===== APP ===== */
+function $(id){return document.getElementById(id);}
+function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function num(id){var v = parseFloat($(id).value); return isNaN(v) ? NaN : v;}
+function showMsg(id, text){var el = $(id); if(text){el.textContent = text; el.className = 'msg';} else {el.textContent = ''; el.className = 'msg hide';}}
+function money(v){return naira(v, 0);}
+function money2(v){return naira(v, 2);}
+function pctText(m){return m === null ? 'n/a' : (Math.round(m * 10000) / 100).toFixed(2) + '%';}
+function profitCell(e){
+  var cls = e.profit < 0 ? 'neg' : 'pos';
+  return '<span class="' + cls + '">' + money(e.profit) + '</span><br><span class="note">' + pctText(e.margin) + '</span>';
+}
+
+/* Tabs */
+var tabs = ['long','short','shuttle','depart'];
+document.querySelectorAll('#tabs button').forEach(function(b){
+  b.addEventListener('click', function(){
+    tabs.forEach(function(t){ $('tab-' + t).className = (t === b.dataset.tab) ? '' : 'hidden'; });
+    document.querySelectorAll('#tabs button').forEach(function(x){ x.className = (x === b) ? 'on' : ''; });
+  });
+});
+
+/* ---- Mode 1 ---- */
+var corridors = [{name:'Agege', km:'74'},{name:'Iyana Ipaja', km:'80'},{name:'Ikeja', km:'76'},{name:'Ikorodu', km:'80'}];
+var venue = {place:null};
+
+function renderRows(){
+  var host = $('l-rows'); host.innerHTML = '';
+  corridors.forEach(function(c, i){
+    var w = document.createElement('div');
+    w.className = 'crow';
+    w.innerHTML = '<div class="row" style="margin-top:8px">' +
+      '<div class="field"><label>Drop-off hub</label><input type="text" class="c-name" value="' + esc(c.name) + '" autocomplete="off"></div>' +
+      '<div style="width:90px"><label>Km</label><input type="number" class="c-km" value="' + esc(c.km) + '" min="0" step="any" inputmode="decimal"></div>' +
+      '<button class="rm c-rm" title="Remove this corridor">Remove</button></div>' +
+      '<div style="margin-top:6px"><button class="ghost c-find" style="padding:6px 10px;font-size:13px">Find km by road</button> <span class="note c-status"></span></div>' +
+      '<div class="sub c-sub"><label>Search the drop-off hub</label><div class="field"><input type="text" class="c-q" placeholder="e.g. Agege Motor Road" autocomplete="off"><div class="sugg c-sugg"></div></div></div>';
+    host.appendChild(w);
+    var nameEl = w.querySelector('.c-name'), kmEl = w.querySelector('.c-km');
+    nameEl.addEventListener('input', function(){ c.name = nameEl.value; recalcLong(); });
+    kmEl.addEventListener('input', function(){ c.km = kmEl.value; w.querySelector('.c-status').textContent = ''; recalcLong(); });
+    w.querySelector('.c-rm').addEventListener('click', function(){ corridors.splice(i,1); renderRows(); recalcLong(); });
+    var sub = w.querySelector('.c-sub'), status = w.querySelector('.c-status');
+    var qEl = w.querySelector('.c-q');
+    w.querySelector('.c-find').addEventListener('click', function(){
+      sub.style.display = sub.style.display === 'block' ? 'none' : 'block';
+      if(sub.style.display === 'block'){ if(!qEl.value) qEl.value = c.name; qEl.focus(); }
+    });
+    makePlaceInput(qEl, w.querySelector('.c-sugg'), null, function(place){
+      if(!venue.place){ status.textContent = 'Pick the event venue first (below the corridor list).'; return; }
+      status.textContent = 'Getting driving distance...';
+      route([venue.place, place]).then(function(km){
+        var v = Math.round(km * 10) / 10;
+        c.km = String(v); kmEl.value = c.km;
+        status.textContent = 'Road distance ' + v + ' km from OSRM. Provisional. Please verify.';
+        sub.style.display = 'none';
+        recalcLong();
+      }).catch(function(e){ status.textContent = 'Could not get a distance (' + e.message + '). Type the km instead.'; });
+    });
+  });
+}
+$('l-add').addEventListener('click', function(){ corridors.push({name:'', km:''}); renderRows(); recalcLong(); });
+
+function recalcLong(){
+  var hire = num('l-hire'), cap = num('l-cap'), m = num('l-margin') / 100;
+  var out = $('l-out');
+  if(!(hire > 0) || !(cap >= 1) || isNaN(m) || m < 0 || m >= 1){ showMsg('l-msg','Enter a bus hire above 0, at least 1 seat, and a margin from 0 to 99%.'); out.innerHTML = ''; return; }
+  var list = corridors.map(function(c){ var k = parseFloat(c.km); return {name: c.name.trim() || 'Corridor', km: isNaN(k) ? 0 : k}; });
+  var r = longDistance({hire:hire, capacity:cap, margin:m, corridors:list});
+  if(r.rate === null){ showMsg('l-msg','Add at least one corridor with a km above 0.'); out.innerHTML = ''; return; }
+  showMsg('l-msg','');
+  var h = '<div class="card"><h2>Rate</h2>' +
+    '<table><tr><td>Required revenue (hire ÷ (1 − margin))</td><td>' + money2(r.required) + '</td></tr>' +
+    '<tr><td>Shortest corridor</td><td>' + r.shortest + ' km</td></tr>' +
+    '<tr class="tot"><td>Rate per km</td><td id="l-rate">' + money2(r.rateShown) + '</td></tr></table>' +
+    '<p class="note" style="margin-bottom:0">The rate is shown to 2 decimals, rounded down, as in the policy (exact: ' + naira(r.rate, 4) + '). Fares are worked out from the exact rate.</p></div>';
+  h += '<div class="card"><h2>Fare per seat</h2><div class="tw"><table><tr><th>Corridor</th><th>Km</th><th>Fare</th></tr>';
+  r.rows.forEach(function(x){ h += '<tr><td>' + esc(x.name) + '</td><td>' + (x.km > 0 ? x.km : '-') + '</td><td><b>' + (x.fare === null ? '-' : money(x.fare)) + '</b></td></tr>'; });
+  h += '</table></div></div>';
+  h += '<div class="card"><h2>Full bus (' + cap + ' seats sold)</h2><div class="tw"><table><tr><th>Corridor</th><th>Fare</th><th>Revenue</th><th>Profit</th><th>Margin</th></tr>';
+  r.rows.forEach(function(x){
+    if(x.fare === null) return;
+    h += '<tr><td>' + esc(x.name) + '</td><td>' + money(x.fare) + '</td><td>' + money(x.full.revenue) + '</td><td class="' + (x.full.profit < 0 ? 'neg' : 'pos') + '">' + money(x.full.profit) + '</td><td>' + pctText(x.full.margin) + '</td></tr>';
+  });
+  h += '</table></div></div>';
+  h += '<div class="card"><h2>If the bus leaves with 12, 13 or 14 bookings</h2><p class="note" style="margin:0">Profit and margin after paying the bus hire of ' + money(hire) + '.</p><div class="tw"><table><tr><th>Corridor</th><th>12 bookings</th><th>13 bookings</th><th>14 bookings</th></tr>';
+  r.rows.forEach(function(x){
+    if(x.fare === null) return;
+    h += '<tr><td>' + esc(x.name) + '</td><td>' + profitCell(x.at[12]) + '</td><td>' + profitCell(x.at[13]) + '</td><td>' + profitCell(x.at[14]) + '</td></tr>';
+  });
+  h += '</table></div></div>';
+  out.innerHTML = h;
+}
+['l-hire','l-cap','l-margin'].forEach(function(id){ $(id).addEventListener('input', recalcLong); });
+
+/* ---- Mode 2 ---- */
+function recalcShort(){
+  var q = num('s-quote'), n = num('s-pax'), m = num('s-margin') / 100;
+  var out = $('s-out');
+  if(!(q > 0) || !(n >= 1) || isNaN(m) || m < 0 || m >= 1){ showMsg('s-msg','Enter a supplier quote above 0, at least 1 passenger, and a margin from 0 to 99%.'); out.innerHTML = ''; return; }
+  showMsg('s-msg','');
+  var r = shortFare(q, n, m);
+  var h = '<div class="card"><h2>Fare per seat</h2><div class="res"><div>Supplier quote ' + money(q) + ' ÷ (' + n + ' × ' + (1 - m).toFixed(4).replace(/0+$/,'').replace(/\.$/,'') + ')</div>' +
+    '<div class="note">Exact: ' + money2(r.exact) + '</div><div class="big">' + money(r.fare) + '</div></div></div>';
+  var quotes = [80000,100000,120000,150000,180000,200000];
+  h += '<div class="card"><h2>Fare at common supplier quotes</h2><p class="note" style="margin:0">Using ' + n + ' paid passengers and a ' + (m * 100) + '% margin.</p><div class="tw"><table><tr><th>Supplier quote</th><th>Fare per seat</th></tr>';
+  shortTable(quotes, n, m).forEach(function(x){ h += '<tr><td>' + money(x.quote) + '</td><td><b>' + money(x.fare) + '</b></td></tr>'; });
+  h += '</table></div></div>';
+  h += '<div class="card"><h2>Profit at 12, 13 or 14 bookings</h2><p class="note" style="margin:0">Supplier quote ' + money(q) + ', fare ' + money(r.fare) + '.</p><div class="tw"><table><tr><th>Bookings</th><th>Revenue</th><th>Profit</th><th>Margin</th></tr>';
+  shortProfitTable(q, r.fare).forEach(function(e){
+    h += '<tr><td>' + e.bookings + '</td><td>' + money(e.revenue) + '</td><td class="' + (e.profit < 0 ? 'neg' : 'pos') + '">' + money(e.profit) + '</td><td>' + pctText(e.margin) + '</td></tr>';
+  });
+  h += '</table></div></div>';
+  out.innerHTML = h;
+}
+['s-quote','s-pax','s-margin'].forEach(function(id){ $(id).addEventListener('input', recalcShort); });
+
+/* ---- Mode 3 ---- */
+function recalcShuttle(){
+  var c = num('m-cost'), t = num('m-trips'), cap = num('m-cap'), m = num('m-margin') / 100;
+  var out = $('m-out');
+  if(!(c > 0) || !(t >= 1) || !(cap >= 1) || isNaN(m) || m < 0 || m >= 1){ showMsg('m-msg','Enter a cost above 0, at least 1 trip, at least 1 seat, and a margin from 0 to 99%.'); out.innerHTML = ''; return; }
+  showMsg('m-msg','');
+  var r = shuttleFare(c, t, cap, m);
+  out.innerHTML = '<div class="card"><h2>Fare per seat</h2><div class="res"><div>' + money(c) + ' ÷ (' + t + ' trips × ' + cap + ' seats × (1 − margin))</div>' +
+    '<div class="note">Exact: ' + money2(r.exact) + '</div><div class="big">' + money(r.fare) + '</div></div>' +
+    '<p class="note">This assumes every seat on every trip is sold (' + (t * cap) + ' seats in total).</p></div>';
+}
+['m-cost','m-trips','m-cap','m-margin'].forEach(function(id){ $(id).addEventListener('input', recalcShuttle); });
+
+/* ---- Mode 4 ---- */
+function recalcDepart(){
+  var f = num('d-fare'), c = num('d-cost'), m = num('d-margin') / 100, b = num('d-book'), cap = num('d-cap');
+  var out = $('d-out');
+  if(!(f > 0) || !(c > 0) || isNaN(m) || m < 0 || m >= 1 || isNaN(b) || b < 0){ showMsg('d-msg','Enter a fare and a supplier cost above 0, a margin from 0 to 99%, and a number of bookings.'); out.innerHTML = ''; return; }
+  showMsg('d-msg','');
+  var r = departure(f, c, m, b);
+  var h = '<div class="card"><h2>Bookings needed</h2><table>' +
+    '<tr><td>Minimum to break even (cost ÷ fare, rounded up)</td><td><b>' + r.breakEven + '</b></td></tr>' +
+    '<tr><td>Minimum to reach the ' + (m * 100) + '% target margin</td><td><b>' + r.target + '</b></td></tr></table>';
+  if(cap > 0 && r.target > cap) h += '<div class="msg">The target margin needs ' + r.target + ' bookings but the bus has only ' + cap + ' seats. It cannot reach the target margin at this fare.</div>';
+  else if(cap > 0 && r.breakEven > cap) h += '<div class="msg">Break-even needs ' + r.breakEven + ' bookings but the bus has only ' + cap + ' seats.</div>';
+  h += '</div>';
+  h += '<div class="card"><h2>With ' + b + ' booking' + (b === 1 ? '' : 's') + '</h2>';
+  h += '<table><tr><td>Revenue</td><td>' + money(r.econ.revenue) + '</td></tr><tr><td>Profit</td><td class="' + (r.econ.profit < 0 ? 'neg' : 'pos') + '">' + money(r.econ.profit) + '</td></tr><tr><td>Margin</td><td>' + pctText(r.econ.margin) + '</td></tr></table>';
+  h += r.reachesBreakEven ? '<div class="ok" id="d-be">Break-even: <b>Yes</b>. ' + b + ' bookings covers the supplier cost.</div>' : '<div class="no" id="d-be">Break-even: <b>No</b>. You need ' + (r.breakEven - b) + ' more booking' + (r.breakEven - b === 1 ? '' : 's') + '.</div>';
+  h += r.reachesTarget ? '<div class="ok" id="d-tg">Target margin of ' + (m * 100) + '%: <b>Yes</b>.</div>' : '<div class="no" id="d-tg">Target margin of ' + (m * 100) + '%: <b>No</b>. You need ' + (r.target - b) + ' more booking' + (r.target - b === 1 ? '' : 's') + '.</div>';
+  h += '</div>';
+  out.innerHTML = h;
+}
+['d-fare','d-cost','d-margin','d-book','d-cap'].forEach(function(id){ $(id).addEventListener('input', recalcDepart); });
+
+/* ---- Place search and routing (optional) ---- */
+var lastNom = 0;
+function sleep(ms){return new Promise(function(r){setTimeout(r,ms);});}
+var nomQueue = Promise.resolve();
+function throttled(fn){
+  var run = nomQueue.then(function(){
+    var wait = Math.max(0, lastNom + 1100 - Date.now());
+    return sleep(wait).then(function(){lastNom = Date.now(); return fn();});
+  });
+  nomQueue = run.catch(function(){});
+  return run;
+}
+function fetchJson(url){
+  return fetch(url).then(function(r){
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  });
+}
+function searchPlaces(q){
+  return throttled(function(){
+    return fetchJson(nominatimUrl(q)).then(function(a){
+      return a.map(function(x){return {name:x.display_name, lat:parseFloat(x.lat), lon:parseFloat(x.lon)};});
+    });
+  }).catch(function(){
+    return throttled(function(){
+      return fetchJson(photonUrl(q)).then(function(j){
+        return j.features.filter(function(f){return f.properties.countrycode === 'NG';}).map(function(f){
+          var p = f.properties;
+          var parts = [p.name, p.street, p.district, p.city, p.county, p.state].filter(function(v,i,a){return v && a.indexOf(v) === i;});
+          return {name:parts.join(', '), lat:f.geometry.coordinates[1], lon:f.geometry.coordinates[0]};
+        });
+      });
+    });
+  });
+}
+function route(points){
+  return fetchJson(osrmUrl(points)).then(function(j){
+    if(j.code !== 'Ok' || !j.routes || !j.routes.length) throw new Error('No route found');
+    return j.routes[0].distance / 1000;
+  });
+}
+// Debounced (1 s) place search box. onPick(place) is called when a suggestion is chosen.
+function makePlaceInput(inputEl, suggEl, pickedEl, onPick){
+  var timer = null, seq = 0;
+  function show(items, loading){
+    suggEl.innerHTML = '';
+    if(loading){var d = document.createElement('div'); d.className='none'; d.textContent='Searching...'; suggEl.appendChild(d);}
+    else if(!items.length){var d2 = document.createElement('div'); d2.className='none'; d2.textContent='No match. Try adding an area, e.g. "Ikeja, Lagos". You can still type the km.'; suggEl.appendChild(d2);}
+    items.forEach(function(it){
+      var d3 = document.createElement('div'); d3.textContent = it.name;
+      d3.addEventListener('mousedown', function(e){e.preventDefault();});
+      d3.addEventListener('click', function(){
+        inputEl.value = it.name.split(',').slice(0,2).join(',').trim();
+        if(pickedEl) pickedEl.textContent = 'Selected: ' + it.name;
+        suggEl.style.display = 'none';
+        if(onPick) onPick(it);
+      });
+      suggEl.appendChild(d3);
+    });
+    suggEl.style.display = 'block';
+  }
+  function doSearch(){
+    var q = inputEl.value.trim();
+    if(q.length < 3){suggEl.style.display='none'; return;}
+    var my = ++seq; show([], true);
+    searchPlaces(q).then(function(items){if(my === seq) show(items,false);}).catch(function(){
+      if(my === seq){suggEl.innerHTML=''; var d=document.createElement('div'); d.className='none'; d.textContent='Place search is not reachable right now. Type the km instead.'; suggEl.appendChild(d); suggEl.style.display='block';}
+    });
+  }
+  inputEl.addEventListener('input', function(){ clearTimeout(timer); timer = setTimeout(doSearch, 1000); });
+  inputEl.addEventListener('keydown', function(e){if(e.key === 'Enter'){e.preventDefault(); clearTimeout(timer); doSearch();}});
+  inputEl.addEventListener('blur', function(){setTimeout(function(){suggEl.style.display='none';}, 200);});
+}
+makePlaceInput($('l-venue'), $('l-venue-sugg'), $('l-venue-picked'), function(p){ venue.place = p; });
+$('l-venue').addEventListener('input', function(){ venue.place = null; $('l-venue-picked').textContent = ''; });
+
+renderRows();
+recalcLong(); recalcShort(); recalcShuttle(); recalcDepart();
+</script>
+</body>
+</html>
