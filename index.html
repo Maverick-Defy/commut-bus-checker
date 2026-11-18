@@ -67,14 +67,43 @@ tr.tot td{font-weight:700}
   <div class="banner" id="banner">Implements Rume's pricing policy as drafted. Provisional distances must be verified. Internal Commut tool.</div>
 
   <div class="seg" id="tabs">
-    <button data-tab="long" class="on">1. Long distance (per km)</button>
+    <button data-tab="oneway" class="on">One-way drop-off (passenger-km)</button>
+    <button data-tab="long">1. Long distance (per km)</button>
     <button data-tab="short">2. Short distance (supplier cost)</button>
     <button data-tab="shuttle">3. Multiple shuttle trips</button>
     <button data-tab="depart">4. Departure check</button>
   </div>
 
+  <!-- MODE 0: one-way passenger-km -->
+  <section id="tab-oneway">
+    <div class="card">
+      <h2>One-way drop-off (passenger-km): the inputs</h2>
+      <p class="note" style="margin:0">One trip after the event, from the venue to the drop-off hubs in route order. One way only. No doubled distances.</p>
+      <div class="grid">
+        <div><label for="o-venue-name">Event venue</label><input type="text" id="o-venue-name" value="Victoria Island" autocomplete="off"></div>
+        <div><label for="o-cost">Supplier cost, whole one-way journey (₦)</label><input type="number" id="o-cost" value="180000" min="0" step="any" inputmode="decimal"></div>
+        <div><label for="o-margin">Target margin (%)</label><input type="number" id="o-margin" value="10" min="0" max="99" step="any" inputmode="decimal"></div>
+        <div><label for="o-seats">Seats on the bus</label><input type="number" id="o-seats" value="14" min="1" step="1" inputmode="numeric"></div>
+      </div>
+      <h3>Drop-off hubs, in route order</h3>
+      <p class="note" style="margin:0 0 4px">Km is the cumulative distance from the venue along the bus's route. Type it yourself, or fetch it from the map. Typed km always works.</p>
+      <div id="o-rows"></div>
+      <button class="ghost" id="o-add" style="margin-top:10px">+ Add a hub</button>
+      <div class="sub" style="display:block">
+        <p class="note" style="margin:0">Optional: use "Find on map" on each hub, search the venue below, then fetch the cumulative km along the route (venue to hub 1 to hub 2 and so on).</p>
+        <label for="o-venue">Search the event venue on the map</label>
+        <div class="field"><input type="text" id="o-venue" placeholder="e.g. Victoria Island, Lagos" autocomplete="off"><div class="sugg" id="o-venue-sugg"></div></div>
+        <div class="picked" id="o-venue-picked"></div>
+        <button class="ghost" id="o-fetch" style="margin-top:10px">Get cumulative km from the map</button>
+        <div class="note" id="o-fetch-status" style="margin-top:6px"></div>
+      </div>
+      <div class="msg hide" id="o-msg"></div>
+    </div>
+    <div id="o-out"></div>
+  </section>
+
   <!-- MODE 1 -->
-  <section id="tab-long">
+  <section id="tab-long" class="hidden">
     <div class="card">
       <h2>Long distance: the inputs</h2>
       <div class="grid">
@@ -144,6 +173,7 @@ tr.tot td{font-weight:700}
   <div class="card note">
     <ul style="margin:0;padding-left:18px">
       <li>Return only, from the event venue to the drop-off hub. No service, checkout or driver fee is added.</li>
+      <li>One-way drop-off: passenger-km = km × passengers, added up. Required revenue = cost ÷ (1 − margin). Common rate = required revenue ÷ passenger-km. Exact fare = km × rate, suggested fare rounded up to the next ₦100.</li>
       <li>Long distance: required revenue = bus hire ÷ (1 − margin). Rate = required revenue ÷ (seats × shortest corridor km). Fare = km × rate, rounded up to the next ₦100.</li>
       <li>Short distance: fare = supplier quote ÷ (passengers × (1 − margin)), rounded up to the next ₦100.</li>
       <li>Shuttle trips: fare = cost ÷ (trips × seats × (1 − margin)), shown rounded up to the next ₦100.</li>
@@ -167,6 +197,42 @@ function economics(fare, bookings, cost){
   var revenue = fare * bookings;
   var profit = revenue - cost;
   return {bookings:bookings, revenue:revenue, profit:profit, margin: revenue > 0 ? profit / revenue : null};
+}
+
+// Mode 0: one-way drop-off by passenger-km.
+// p: {cost, margin (0-1), seats, hubs:[{name, km, pax}]}  (km is cumulative along the route)
+function onewayDrop(p){
+  var pkm = 0, totalPax = 0;
+  p.hubs.forEach(function(h){ pkm += h.km * h.pax; totalPax += h.pax; });
+  var required = p.cost / (1 - p.margin);
+  if(!(pkm > 0)) return {pkm:pkm, totalPax:totalPax, required:required, rate:null, rows:[]};
+  var rate = required / pkm;
+  var rows = p.hubs.map(function(h){
+    var exact = h.km * rate;
+    var fare = ceil100(exact);
+    return {name:h.name, km:h.km, pax:h.pax, pkm:h.km * h.pax, exact:exact, fare:fare, revenue:fare * h.pax};
+  });
+  var totalRevenue = rows.reduce(function(a, r){ return a + r.revenue; }, 0);
+  var profit = totalRevenue - p.cost;
+  var bookings = [];
+  if(totalPax > 0){
+    for(var n = p.seats; n >= Math.max(1, p.seats - 3); n--){
+      var rev = totalRevenue * n / totalPax;
+      bookings.push({n:n, revenue:rev, profit:rev - p.cost, margin: rev > 0 ? (rev - p.cost) / rev : null});
+    }
+  }
+  var breakEvenBookings = null;
+  if(totalPax > 0 && totalRevenue > 0){
+    var be = Math.ceil(p.cost * totalPax / totalRevenue - 1e-9);
+    breakEvenBookings = be < 1 ? 1 : be;
+  }
+  return {
+    pkm:pkm, totalPax:totalPax, required:required, rate:rate, rows:rows,
+    totalRevenue:totalRevenue, profit:profit, margin: totalRevenue > 0 ? profit / totalRevenue : null,
+    breakEvenPkm: p.cost / rate, targetPkm: required / rate,
+    bookings:bookings, breakEvenBookings:breakEvenBookings,
+    overSeats: totalPax > p.seats
+  };
 }
 
 // Mode 1: long distance per km.
@@ -231,7 +297,7 @@ function nominatimUrl(q){
 function photonUrl(q){
   return 'https://photon.komoot.io/api/?limit=6&lat=6.5244&lon=3.3792&q=' + encodeURIComponent(q);
 }
-function osrmUrl(points){
+function osrmUrl(points){ // overview=false still returns per-leg distances
   var s = points.map(function(c){return c.lon + ',' + c.lat;}).join(';');
   return 'https://router.project-osrm.org/route/v1/driving/' + s + '?overview=false';
 }
@@ -251,13 +317,110 @@ function profitCell(e){
 }
 
 /* Tabs */
-var tabs = ['long','short','shuttle','depart'];
+var tabs = ['oneway','long','short','shuttle','depart'];
 document.querySelectorAll('#tabs button').forEach(function(b){
   b.addEventListener('click', function(){
     tabs.forEach(function(t){ $('tab-' + t).className = (t === b.dataset.tab) ? '' : 'hidden'; });
     document.querySelectorAll('#tabs button').forEach(function(x){ x.className = (x === b) ? 'on' : ''; });
   });
 });
+
+/* ---- Mode 0: one-way passenger-km ---- */
+var hubs = [
+  {name:'Gbagada', km:'21', pax:'4', place:null},
+  {name:'Maryland', km:'22', pax:'3', place:null},
+  {name:'Ikeja', km:'29', pax:'2', place:null},
+  {name:'Agege', km:'35', pax:'5', place:null}
+];
+var oVenue = {place:null};
+function renderHubs(){
+  var host = $('o-rows'); host.innerHTML = '';
+  hubs.forEach(function(h, i){
+    var w = document.createElement('div'); w.className = 'hrow';
+    w.innerHTML = '<div style="margin-top:12px;font-size:13px;color:var(--muted)">Hub ' + (i + 1) + '</div>' +
+      '<div class="row"><div class="field"><label>Hub name</label><input type="text" class="h-name" value="' + esc(h.name) + '" autocomplete="off"></div>' +
+      '<div style="width:80px"><label>Km</label><input type="number" class="h-km" value="' + esc(h.km) + '" min="0" step="any" inputmode="decimal"></div>' +
+      '<div style="width:70px"><label>Pax</label><input type="number" class="h-pax" value="' + esc(h.pax) + '" min="0" step="1" inputmode="numeric"></div></div>' +
+      '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+      '<button class="ghost h-up" style="padding:6px 10px;font-size:13px" title="Move up">↑ Up</button>' +
+      '<button class="ghost h-down" style="padding:6px 10px;font-size:13px" title="Move down">↓ Down</button>' +
+      '<button class="ghost h-find" style="padding:6px 10px;font-size:13px">Find on map</button>' +
+      '<button class="rm h-rm" style="padding:6px 10px;font-size:13px" title="Remove this hub">Remove</button></div>' +
+      '<div class="note h-status" style="margin-top:4px">' + (h.place ? 'On map: ' + esc(h.place.name) : '') + '</div>' +
+      '<div class="sub h-sub"><label>Search the hub</label><div class="field"><input type="text" class="h-q" placeholder="e.g. Gbagada Phase 1" autocomplete="off"><div class="sugg h-sugg"></div></div></div>';
+    host.appendChild(w);
+    var q = function(c){ return w.querySelector(c); };
+    q('.h-name').addEventListener('input', function(){ h.name = this.value; recalcOneway(); });
+    q('.h-km').addEventListener('input', function(){ h.km = this.value; recalcOneway(); });
+    q('.h-pax').addEventListener('input', function(){ h.pax = this.value; recalcOneway(); });
+    q('.h-rm').addEventListener('click', function(){ hubs.splice(i, 1); renderHubs(); recalcOneway(); });
+    q('.h-up').addEventListener('click', function(){ if(i > 0){ var t = hubs[i-1]; hubs[i-1] = hubs[i]; hubs[i] = t; renderHubs(); recalcOneway(); } });
+    q('.h-down').addEventListener('click', function(){ if(i < hubs.length - 1){ var t = hubs[i+1]; hubs[i+1] = hubs[i]; hubs[i] = t; renderHubs(); recalcOneway(); } });
+    var sub = q('.h-sub'), qEl = q('.h-q');
+    q('.h-find').addEventListener('click', function(){
+      sub.style.display = sub.style.display === 'block' ? 'none' : 'block';
+      if(sub.style.display === 'block'){ if(!qEl.value) qEl.value = h.name; qEl.focus(); }
+    });
+    makePlaceInput(qEl, q('.h-sugg'), null, function(place){
+      h.place = place; q('.h-status').textContent = 'On map: ' + place.name; sub.style.display = 'none';
+    });
+  });
+}
+$('o-add').addEventListener('click', function(){ hubs.push({name:'', km:'', pax:'', place:null}); renderHubs(); recalcOneway(); });
+makePlaceInput($('o-venue'), $('o-venue-sugg'), $('o-venue-picked'), function(p){ oVenue.place = p; });
+$('o-venue').addEventListener('input', function(){ oVenue.place = null; $('o-venue-picked').textContent = ''; });
+$('o-fetch').addEventListener('click', function(){
+  var st = $('o-fetch-status');
+  if(!oVenue.place){ st.textContent = 'Search and pick the event venue first.'; return; }
+  var missing = hubs.filter(function(h){ return !h.place; });
+  if(!hubs.length || missing.length){ st.textContent = 'Use "Find on map" for every hub first (' + missing.length + ' still missing). Or just type the km.'; return; }
+  st.textContent = 'Getting the route...';
+  routeLegs([oVenue.place].concat(hubs.map(function(h){ return h.place; }))).then(function(legs){
+    var cum = 0;
+    legs.forEach(function(d, i){ cum += d; hubs[i].km = String(Math.round(cum * 10) / 10); });
+    renderHubs(); recalcOneway();
+    st.textContent = 'Cumulative road distance along the route, in hub order. Provisional. Please verify.';
+  }).catch(function(e){ st.textContent = 'Could not get the route (' + e.message + '). Type the km instead.'; });
+});
+
+function recalcOneway(){
+  var cost = num('o-cost'), m = num('o-margin') / 100, seats = num('o-seats');
+  var out = $('o-out');
+  if(!(cost > 0) || !(seats >= 1) || isNaN(m) || m < 0 || m >= 1){ showMsg('o-msg','Enter a supplier cost above 0, at least 1 seat, and a margin from 0 to 99%.'); out.innerHTML = ''; return; }
+  var list = hubs.map(function(h){ var k = parseFloat(h.km), p = parseFloat(h.pax); return {name:h.name.trim() || 'Hub', km:isNaN(k) ? 0 : k, pax:isNaN(p) ? 0 : p}; });
+  var r = onewayDrop({cost:cost, margin:m, seats:seats, hubs:list});
+  if(r.rate === null){ showMsg('o-msg','Add at least one hub with a km and passengers above 0.'); out.innerHTML = ''; return; }
+  var warns = [];
+  if(r.overSeats) warns.push('Total passengers (' + r.totalPax + ') is more than the seats on the bus (' + seats + ').');
+  for(var i = 1; i < list.length; i++){ if(list[i].km < list[i-1].km){ warns.push('"' + list[i].name + '" has fewer km than "' + list[i-1].name + '". Km should be cumulative along the route, so it should not go down.'); break; } }
+  showMsg('o-msg', warns.join(' '));
+  var h = '<div class="card"><h2>Common rate</h2><table>' +
+    '<tr><td>Total passenger-km (km × passengers, added up)</td><td id="o-pkm">' + (Math.round(r.pkm * 100) / 100) + ' km</td></tr>' +
+    '<tr><td>Required revenue (cost ÷ (1 − margin))</td><td id="o-req">' + money(r.required) + '</td></tr>' +
+    '<tr class="tot"><td>Common rate per passenger-km</td><td id="o-rate">' + money2(r.rate) + '</td></tr></table></div>';
+  h += '<div class="card"><h2>Fare per passenger</h2><p class="note" style="margin:0">Exact fare = km × rate. Suggested fare is rounded up to the next ₦100.</p><div class="tw"><table><tr><th>Hub</th><th>Km</th><th>Pax</th><th>Pass-km</th><th>Exact fare</th><th>Suggested fare</th></tr>';
+  r.rows.forEach(function(x){ h += '<tr><td>' + esc(x.name) + '</td><td>' + x.km + '</td><td>' + x.pax + '</td><td>' + (Math.round(x.pkm * 100) / 100) + '</td><td>' + money2(x.exact) + '</td><td><b>' + money(x.fare) + '</b></td></tr>'; });
+  h += '</table></div></div>';
+  h += '<div class="card"><h2>Revenue and profit (suggested fares)</h2><div class="tw"><table><tr><th>Hub</th><th>Pax</th><th>Fare</th><th>Revenue</th></tr>';
+  r.rows.forEach(function(x){ h += '<tr><td>' + esc(x.name) + '</td><td>' + x.pax + '</td><td>' + money(x.fare) + '</td><td>' + money(x.revenue) + '</td></tr>'; });
+  h += '<tr class="tot"><td>Total</td><td>' + r.totalPax + '</td><td></td><td id="o-total">' + money(r.totalRevenue) + '</td></tr></table></div>' +
+    '<table><tr><td>Supplier cost</td><td>' + money(cost) + '</td></tr>' +
+    '<tr class="tot"><td>Gross profit</td><td id="o-profit" class="' + (r.profit < 0 ? 'neg' : 'pos') + '">' + money(r.profit) + '</td></tr>' +
+    '<tr class="tot"><td>Margin</td><td id="o-margin-out">' + pctText(r.margin) + '</td></tr></table></div>';
+  h += '<div class="card"><h2>Booking thresholds</h2><table>' +
+    '<tr><td>Break-even passenger-km (cost ÷ rate)</td><td id="o-bepkm">' + (Math.round(r.breakEvenPkm * 10) / 10) + '</td></tr>' +
+    '<tr><td>Target passenger-km (required revenue ÷ rate)</td><td id="o-tgpkm">' + (Math.round(r.targetPkm * 10) / 10) + '</td></tr></table>' +
+    '<p class="note" style="margin-bottom:0">If bookings keep about the same mix of hubs, estimated revenue = total revenue × bookings ÷ ' + r.totalPax + '.</p>' +
+    '<div class="tw"><table id="o-bk"><tr><th>Bookings</th><th>Est. revenue</th><th>Profit / loss</th><th>Margin</th></tr>';
+  r.bookings.forEach(function(b){ h += '<tr><td>' + b.n + '</td><td>' + money(b.revenue) + '</td><td class="' + (b.profit < 0 ? 'neg' : 'pos') + '">' + money(b.profit) + '</td><td>' + pctText(b.margin) + '</td></tr>'; });
+  h += '</table></div>';
+  if(r.breakEvenBookings !== null) h += '<div class="res"><div>Break-even bookings (average mix)</div><div class="big" id="o-bebook">' + r.breakEvenBookings + '</div>' +
+    (r.breakEvenBookings > seats ? '<div class="note">More than the ' + seats + ' seats, so this bus cannot break even at this mix.</div>' : '') + '</div>';
+  h += '</div>';
+  h += '<div class="card note"><b>Operating note.</b> Assumes the distances are cumulative along the bus\'s sequential route and the supplier charge covers the whole one-way journey including driver and fuel. The common rate depends on the expected mix; monitor total passenger-km booked, not just seats.</div>';
+  out.innerHTML = h;
+}
+['o-cost','o-margin','o-seats'].forEach(function(id){ $(id).addEventListener('input', recalcOneway); });
 
 /* ---- Mode 1 ---- */
 var corridors = [{name:'Agege', km:'74'},{name:'Iyana Ipaja', km:'80'},{name:'Ikeja', km:'76'},{name:'Ikorodu', km:'80'}];
@@ -430,6 +593,12 @@ function route(points){
     return j.routes[0].distance / 1000;
   });
 }
+function routeLegs(points){
+  return fetchJson(osrmUrl(points)).then(function(j){
+    if(j.code !== 'Ok' || !j.routes || !j.routes.length || !j.routes[0].legs) throw new Error('No route found');
+    return j.routes[0].legs.map(function(l){ return l.distance / 1000; });
+  });
+}
 // Debounced (1 s) place search box. onPick(place) is called when a suggestion is chosen.
 function makePlaceInput(inputEl, suggEl, pickedEl, onPick){
   var timer = null, seq = 0;
@@ -465,8 +634,8 @@ function makePlaceInput(inputEl, suggEl, pickedEl, onPick){
 makePlaceInput($('l-venue'), $('l-venue-sugg'), $('l-venue-picked'), function(p){ venue.place = p; });
 $('l-venue').addEventListener('input', function(){ venue.place = null; $('l-venue-picked').textContent = ''; });
 
-renderRows();
-recalcLong(); recalcShort(); recalcShuttle(); recalcDepart();
+renderRows(); renderHubs();
+recalcOneway(); recalcLong(); recalcShort(); recalcShuttle(); recalcDepart();
 </script>
 </body>
 </html>

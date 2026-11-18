@@ -22,6 +22,8 @@ const ok = (c, m) => { n++; assert(c, m); };
           [{display_name:'Shiro Lagos, Lekki, Lagos, Nigeria', lat:'6.44', lon:'3.55'}] :
           [{display_name:'Agege Motor Road, Agege, Lagos, Nigeria', lat:'6.62', lon:'3.32'}]);
       }
+      if (u.includes('router.project-osrm.org') && u.split('/driving/')[1].split('?')[0].split(';').length > 2)
+        return json({code:'Ok', routes:[{legs:[{distance:20000},{distance:2500},{distance:7000},{distance:6000}]}]});
       if (u.includes('router.project-osrm.org')) return json({code:'Ok', routes:[{distance: 75432}]});
       return Promise.reject(new Error('unexpected ' + u));
     };
@@ -33,6 +35,52 @@ const ok = (c, m) => { n++; assert(c, m); };
 
   // Banner
   ok((await text('#banner')).includes("Implements Rume's pricing policy as drafted. Provisional distances must be verified. Internal Commut tool."), 'banner text');
+
+  // Mode 0 (default tab): one-way passenger-km
+  let t0 = await text('#o-out');
+  ok(await page.$eval('#tabs button.on', e => e.dataset.tab) === 'oneway', 'one-way tab is first and active');
+  ok(await page.$eval('#tabs button', e => e.dataset.tab) === 'oneway', 'one-way tab is first');
+  for (const f of ['₦522.19','₦200,000','₦10,966.06','₦11,488.25','₦15,143.60','₦18,276.76','₦11,000','₦11,500','₦15,200','₦18,300','₦44,000','₦34,500','₦30,400','₦91,500','₦200,400','₦20,400','10.18%','₦186,086','₦6,086','3.27%','₦171,771','-₦8,229','-4.79%','₦157,457','-₦22,543','-14.32%'])
+    ok(t0.includes(f), 'one-way shows ' + f);
+  ok((await text('#o-pkm')).startsWith('383'), 'pkm 383');
+  ok((await text('#o-bepkm')) === '344.7' && (await text('#o-tgpkm')) === '383', 'break-even and target pkm');
+  ok((await text('#o-bebook')) === '13', 'break-even bookings 13');
+  ok(t0.includes('monitor total passenger-km booked, not just seats'), 'operating note shown');
+  // pax over seats warning
+  await setVal('#o-seats', 10);
+  ok(!(await page.$eval('#o-msg', e => e.classList.contains('hide'))) && (await text('#o-msg')).includes('more than the seats'), 'warning when pax > seats');
+  await setVal('#o-seats', 14);
+  ok(await page.$eval('#o-msg', e => e.classList.contains('hide')), 'warning clears');
+  // reorder: move Gbagada down, order changes, pkm unchanged
+  await page.$$eval('.h-down', b => b[0].click());
+  ok((await page.$$eval('.h-name', e => e.map(x => x.value))).join() === 'Maryland,Gbagada,Ikeja,Agege', 'reorder works');
+  ok((await text('#o-msg')).includes('should not go down'), 'out-of-order km warning after reorder (Gbagada 21 after Maryland 22)');
+  ok((await text('#o-pkm')).startsWith('383'), 'pkm unchanged after reorder');
+  await page.$$eval('.h-up', b => b[1].click());
+  // add + remove hub
+  await page.click('#o-add'); ok((await page.$$('.hrow')).length === 5, 'hub added');
+  await page.$$eval('.h-rm', b => b[4].click()); ok((await page.$$('.hrow')).length === 4, 'hub removed');
+  // manual km edit changes numbers: Agege 35 -> 40
+  await page.$$eval('.h-km', e => { e[3].value = '40'; e[3].dispatchEvent(new Event('input')); });
+  ok((await text('#o-pkm')).startsWith('408'), 'manual km edit: pkm 408');
+  // Map lookup (mocked): pick venue and all hubs, fetch cumulative km
+  await page.reload({waitUntil: 'load'});
+  await page.type('#o-venue', 'Shiro Lagos');
+  await page.waitForSelector('#o-venue-sugg div:not(.none)', {visible: true, timeout: 8000});
+  await page.click('#o-venue-sugg div:not(.none)');
+  for (let i = 0; i < 4; i++) {
+    await page.$$eval('.h-find', (b, i) => b[i].click(), i);
+    const qs = await page.$$('.h-q'); await qs[i].click({clickCount: 3}); await qs[i].type('Agege Motor Road');
+    await page.waitForSelector('.hrow:nth-child(' + (i + 1) + ') .h-sugg div:not(.none)', {visible: true, timeout: 8000});
+    await page.$eval('.hrow:nth-child(' + (i + 1) + ') .h-sugg div:not(.none)', e => e.click());
+  }
+  await page.click('#o-fetch');
+  await page.waitForFunction(() => document.querySelectorAll('.h-km')[3].value === '35.5', {timeout: 8000});
+  ok((await page.$$eval('.h-km', e => e.map(x => x.value))).join() === '20,22.5,29.5,35.5', 'cumulative km along route from OSRM legs');
+  await page.reload({waitUntil: 'load'});
+
+  // Existing tabs, unchanged: switch to long distance
+  await tab('long');
 
   // Mode 1 defaults
   let t1 = await text('#l-out');
@@ -48,7 +96,7 @@ const ok = (c, m) => { n++; assert(c, m); };
   t1 = await text('#l-out');
   ok(t1.includes('76 km'), 'shortest corridor updates after removing Agege');
   // Reload to restore defaults for lookup test
-  await page.reload({waitUntil: 'load'});
+  await page.reload({waitUntil: 'load'}); await tab('long');
 
   // Lookup flow (mocked): pick venue, then find km for Agege
   await page.type('#l-venue', 'Shiro Lagos');
@@ -65,13 +113,13 @@ const ok = (c, m) => { n++; assert(c, m); };
   ok(calls.some(u => u.includes('countrycodes=ng')), 'nominatim biased to Nigeria');
   ok(calls.some(u => u.includes('router.project-osrm.org')), 'osrm used');
   ok((await text('#l-out')).includes('75.4 km'), 'fetched km drives the rate');
-  await page.reload({waitUntil: 'load'});
+  await page.reload({waitUntil: 'load'}); await tab('long');
 
   // Manual km works even if map services fail
   // (mock returns for unexpected URLs reject; typing km needs no fetch)
   await page.$$eval('.c-km', e => { e[0].value = '100'; e[0].dispatchEvent(new Event('input')); });
   ok((await text('#l-out')).includes('₦30,300'), 'manual km works (Agege 100 km -> 30,300)');
-  await page.reload({waitUntil: 'load'});
+  await page.reload({waitUntil: 'load'}); await tab('long');
 
   // Mode 2
   await tab('short');

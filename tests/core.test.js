@@ -2,13 +2,45 @@
 const fs = require('fs'), path = require('path'), assert = require('assert');
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const core = html.split('//CORE_START')[1].split('//CORE_END')[0];
-const L = new Function(core + '; return {ceil100,floor2,longDistance,shortFare,shortTable,shortProfitTable,shuttleFare,departure,economics,naira,pct};')();
+const L = new Function(core + '; return {onewayDrop,ceil100,floor2,longDistance,shortFare,shortTable,shortProfitTable,shuttleFare,departure,economics,naira,pct};')();
 let n = 0;
 function eq(a, b, label){ n++; assert.strictEqual(a, b, label + ': got ' + a + ', expected ' + b); }
 function near(a, b, label, tol){ n++; assert(Math.abs(a - b) <= (tol || 0.005), label + ': got ' + a + ', expected ' + b); }
 
 // Rounding
 eq(L.ceil100(23015.4), 23100, 'ceil100 up'); eq(L.ceil100(23100), 23100, 'ceil100 exact'); eq(L.ceil100(23100.0000000001), 23100, 'ceil100 float noise');
+
+// Mode 0: one-way drop-off (passenger-km), Rume's newer method. Exact rate used in all computation.
+const ow = L.onewayDrop({cost:180000, margin:0.10, seats:14, hubs:[
+  {name:'Gbagada',km:21,pax:4},{name:'Maryland',km:22,pax:3},{name:'Ikeja',km:29,pax:2},{name:'Agege',km:35,pax:5}]});
+eq(ow.pkm, 383, 'passenger-km'); eq(ow.totalPax, 14, 'total pax');
+near(ow.required, 200000, 'required revenue 200,000', 1e-6);
+eq(L.naira(ow.rate, 2), '\u20A6522.19', 'rate displays 522.19');
+near(ow.rate, 200000 / 383, 'rate is exact', 1e-12);
+// KNOWN DISCREPANCY: Rume prints Ikeja's exact fare as 15,143.61. The exact rate gives 29 x 200000/383 = 15,143.6031 -> 15,143.60.
+// (29 x the rounded 522.19 would be 15,143.51, so 15,143.61 matches neither.) It is 1 kobo-level (N0.01) and the suggested fare N15,200 is unaffected.
+assert.deepStrictEqual(ow.rows.map(r => r.exact.toFixed(2)), ['10966.06','11488.25','15143.60','18276.76']); n++;
+near(ow.rows[2].exact, 15143.61, 'Ikeja exact vs Rume 15,143.61 (known N0.01 difference)', 0.011);
+eq(ow.rows[2].exact.toFixed(2) === '15143.61', false, 'Ikeja exact is not 15,143.61 (documented discrepancy)');
+assert.deepStrictEqual(ow.rows.map(r => r.fare), [11000,11500,15200,18300]); n++;
+assert.deepStrictEqual(ow.rows.map(r => r.revenue), [44000,34500,30400,91500]); n++;
+assert.deepStrictEqual(ow.rows.map(r => r.pkm), [84,66,58,175]); n++;
+eq(ow.totalRevenue, 200400, 'total revenue'); eq(ow.profit, 20400, 'gross profit');
+eq(L.pct(ow.margin), 10.18, 'margin 10.18%');
+near(ow.breakEvenPkm, 344.7, 'break-even pkm ~344.7', 0.05); near(ow.targetPkm, 383, 'target pkm ~383', 1e-6);
+const bk = ow.bookings;
+assert.deepStrictEqual(bk.map(b => b.n), [14,13,12,11]); n++;
+const exp = {14:[200400,20400,10.18], 13:[186086,6086,3.27], 12:[171771,-8229,-4.79], 11:[157457,-22543,-14.32]};
+bk.forEach(b => {
+  eq(Math.round(b.revenue), exp[b.n][0], 'revenue @' + b.n);
+  eq(Math.round(b.profit), exp[b.n][1], 'profit @' + b.n);
+  eq(L.pct(b.margin), exp[b.n][2], 'margin @' + b.n);
+});
+eq(ow.breakEvenBookings, 13, 'break-even bookings 13');
+eq(ow.overSeats, false, 'no over-seat warning at 14/14');
+eq(L.onewayDrop({cost:180000, margin:0.1, seats:12, hubs:[{name:'a',km:21,pax:14}]}).overSeats, true, 'over-seat warning when pax > seats');
+eq(L.onewayDrop({cost:1, margin:0.1, seats:14, hubs:[]}).rate, null, 'no hubs');
+eq(L.onewayDrop({cost:1, margin:0.1, seats:2, hubs:[{name:'a',km:5,pax:1}]}).bookings.length, 2, 'bookings rows limited by seats');
 
 // Mode 1: long distance
 const ld = L.longDistance({hire:290000, capacity:14, margin:0.10,
